@@ -15,14 +15,14 @@ char **
 split_args(char *args)
 {
     int argc = 2;
-    for (int i = 2; args[i]; i++)
-        if ((args[i - 1] == ' ' || args[i - 1] == '\t') && (args[i] != ' ' && args[i] != '\t'))
+    for (int i = 1; args[i]; i++)
+        if (args[i] == ' ')
             argc++;
 
     char **argv = malloc(argc * sizeof(char *));
 
     argc = 0;
-    const char *delim = " \t";
+    const char *delim = " ";
     for (char *token = strtok(args, delim); token; token = strtok(NULL, delim))
         argv[argc++] = token;
     argv[argc] = NULL;
@@ -30,18 +30,33 @@ split_args(char *args)
     return argv;
 }
 
-char *
-skip_space(char *s)
+static void
+shrink_space(char *s)
 {
+    char *p = s;
     while (*s == ' ' || *s == '\t')
         s++;
-    return s;
+    *p = *s;
+    while (*++s) {
+        if (*s == ' ' || *s == '\t') {
+            if (*p != ' ')
+                *++p = ' ';
+        }
+        else
+            *++p = *s;
+    }
+    *p-- = 0;
+    if (*p == ' ')
+        *p = 0;
 }
 
 void
 execute_command(char *command, bool tracing)
 {
-    command = skip_space(command);
+    shrink_space(command);
+    if (*command == 0)
+        return;
+
     if (tracing)
         fprintf(stderr, "+ %s\n", command);
 
@@ -72,10 +87,7 @@ start_shell(bool tracing)
         printf("sish$ ");
         if (fgets(buf, sizeof(buf), stdin) == NULL)
             warn("fgets");
-        int buf_len = strlen(buf);
-        if (buf_len <= 1)
-            continue;
-        buf[buf_len - 1] = 0;
-        execute_command(buf, tracing);
+        else
+            execute_command(buf, tracing);
     }
 }
