@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 void
-execute_command(char *command, bool tracing);
+execute_command(char *cmd, bool tracing, int in_fd, int out_fd);
 
 void
 start_shell(bool tracing);

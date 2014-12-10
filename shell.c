@@ -1,15 +1,18 @@
 #include "shell.h"
 
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
 #include <ctype.h>
 #include <err.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
 
 char **
 split_args(char *args)
@@ -30,37 +33,83 @@ split_args(char *args)
     return argv;
 }
 
+static char *
+skip_space(char *s)
+{
+    while (*s == ' ' || *s == '\t')
+        s++;
+    return s;
+}
+
 static void
 shrink_space(char *s)
 {
     char *p = s;
-    while (*s == ' ' || *s == '\t')
-        s++;
-    *p = *s;
-    while (*++s) {
+    s = skip_space(s);
+    while (*s) {
         if (*s == ' ' || *s == '\t') {
-            if (*p != ' ')
-                *++p = ' ';
+            s = skip_space(s);
+            *p++ = ' ';
         }
         else
-            *++p = *s;
+            *p++ = *s++;
     }
-    *p-- = 0;
-    if (*p == ' ')
-        *p = 0;
+    /* ignore the last char \n */
+    *--p = 0;
+    if (*(p - 1) == ' ')
+        *(p - 1) = 0;
+}
+
+static int
+open_redirect_file(char **file_name, int fd, int open_flag)
+{
+    char *p = skip_space(*file_name);
+    int l = strcspn(p, " \t\n<>");
+    if (l == 0) {
+        warnx("Redirection file name needed");
+        return -1;
+    }
+    char t = p[l];
+    p[l] = 0;
+    if (fd != STDIN_FILENO && fd != STDOUT_FILENO)
+        close(fd);
+    if ((fd = open(p, open_flag, 0644)) == -1)
+        warn("%s", p);
+
+    for (int i = 0; i < l; i++)
+        p[i] = ' ';
+    p[l] = t;
+    *file_name = p + l - 1;
+    return fd;
 }
 
 void
-execute_command(char *command, bool tracing)
+execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
 {
-    shrink_space(command);
-    if (*command == 0)
+    for (char *p = cmd; *p; p++) {
+        if (*p == '>') {
+            int flags = O_WRONLY | O_CREAT | O_TRUNC;
+            *p++ = ' ';
+            if (*p == '>') {
+                *p++ = ' ';
+                flags = O_WRONLY | O_CREAT | O_APPEND;
+            }
+            if ((out_fd = open_redirect_file(&p, out_fd, flags)) == -1)
+                return;
+        } else if (*p == '<') {
+            *p++ = ' ';
+            if ((in_fd = open_redirect_file(&p, in_fd, O_RDONLY)) == -1)
+                return;
+        }
+    }
+    shrink_space(cmd);
+    if (*cmd == 0)
         return;
 
     if (tracing)
-        fprintf(stderr, "+ %s\n", command);
+        fprintf(stderr, "+ %s\n", cmd);
 
-    char **argv = split_args(command);
+    char **argv = split_args(cmd);
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -69,10 +118,16 @@ execute_command(char *command, bool tracing)
     }
 
     if (pid == 0) {
-        execvp(command, argv);
-        err(127, "%s", command);
+        dup2(in_fd, STDIN_FILENO);
+        dup2(out_fd, STDOUT_FILENO);
+        execvp(cmd, argv);
+        err(127, "%s", cmd);
     }
     free(argv);
+    if (in_fd != STDIN_FILENO)
+        close(in_fd);
+    if (out_fd != STDOUT_FILENO)
+        close(out_fd);
 
     int status;
     if (waitpid(pid, &status, 0) == -1)
@@ -88,6 +143,6 @@ start_shell(bool tracing)
         if (fgets(buf, sizeof(buf), stdin) == NULL)
             warn("fgets");
         else
-            execute_command(buf, tracing);
+            execute_command(buf, tracing, STDIN_FILENO, STDOUT_FILENO);
     }
 }

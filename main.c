@@ -46,7 +46,7 @@ main(int argc, char *argv[])
         usage();
 
     if (command)
-        execute_command(command, tracing);
+        execute_command(command, tracing, STDIN_FILENO, STDOUT_FILENO);
     else
         start_shell(tracing);
 
