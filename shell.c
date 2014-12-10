@@ -13,6 +13,15 @@
 #include <string.h>
 #include <unistd.h>
 
+static void
+echo(char **argv, int fd)
+{
+    if (*++argv)
+        dprintf(fd, "%s", *argv);
+    while (*++argv)
+        dprintf(fd, " %s", *argv);
+    dprintf(fd, "\n");
+}
 
 char **
 split_args(char *args)
@@ -111,27 +120,33 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
 
     char **argv = split_args(cmd);
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        warn("fork");
-        return;
-    }
+    if (strcmp(cmd, "exit") == 0)
+        exit(EXIT_SUCCESS);
+    else if (strcmp(cmd, "echo") == 0)
+        echo(argv, out_fd);
+    else {
+        pid_t pid = fork();
+        if (pid < 0) {
+            warn("fork");
+            return;
+        }
 
-    if (pid == 0) {
-        dup2(in_fd, STDIN_FILENO);
-        dup2(out_fd, STDOUT_FILENO);
-        execvp(cmd, argv);
-        err(127, "%s", cmd);
+        if (pid == 0) {
+            dup2(in_fd, STDIN_FILENO);
+            dup2(out_fd, STDOUT_FILENO);
+            execvp(cmd, argv);
+            err(127, "%s", cmd);
+        }
+
+        int status;
+        if (waitpid(pid, &status, 0) == -1)
+            warn("waitpid");
     }
     free(argv);
     if (in_fd != STDIN_FILENO)
         close(in_fd);
     if (out_fd != STDOUT_FILENO)
         close(out_fd);
-
-    int status;
-    if (waitpid(pid, &status, 0) == -1)
-        warn("waitpid");
 }
 
 void
