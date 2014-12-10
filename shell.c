@@ -17,9 +17,9 @@ static void
 echo(char **argv, int fd)
 {
     if (*++argv)
-        dprintf(fd, "%s", *argv);
-    while (*++argv)
-        dprintf(fd, " %s", *argv);
+        dprintf(fd, "%s", *argv++);
+    while (*argv)
+        dprintf(fd, " %s", *argv++);
     dprintf(fd, "\n");
 }
 
