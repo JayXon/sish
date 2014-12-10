@@ -14,6 +14,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifndef ARG_MAX
+#define ARG_MAX sysconf(_SC_ARG_MAX)
+#endif
+
 static void
 echo(char **argv, int fd)
 {
@@ -173,7 +177,7 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
 void
 start_shell(bool tracing)
 {
-    char buf[sysconf(_SC_ARG_MAX)];
+    char buf[ARG_MAX];
     while (true) {
         printf("sish$ ");
         if (fgets(buf, sizeof(buf), stdin) == NULL)
