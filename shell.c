@@ -8,6 +8,7 @@
 #include <err.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,24 @@ echo(char **argv, int fd)
     while (*argv)
         dprintf(fd, " %s", *argv++);
     dprintf(fd, "\n");
+}
+
+static void
+cd(char *path)
+{
+    if (path == NULL)
+        if ((path = getenv("HOME")) == NULL) {
+            struct passwd *pw = getpwuid(getuid());
+            if (pw == NULL) {
+                warn("getpwuid");
+                return;
+            }
+            if ((path = pw->pw_dir) == NULL)
+                return;
+        }
+
+    if (chdir(path) == -1)
+        warn("cd: %s", path);
 }
 
 char **
@@ -124,6 +143,8 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
         exit(EXIT_SUCCESS);
     else if (strcmp(cmd, "echo") == 0)
         echo(argv, out_fd);
+    else if (strcmp(cmd, "cd") == 0)
+        cd(argv[1]);
     else {
         pid_t pid = fork();
         if (pid < 0) {
