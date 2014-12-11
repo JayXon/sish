@@ -86,10 +86,10 @@ shrink_space(char *s)
         else
             *p++ = *s++;
     }
-    /* ignore the last char \n */
-    *--p = 0;
-    if (*(p - 1) == ' ')
-        *(p - 1) = 0;
+    if (*--p == '\n')
+        *p-- = 0;
+    if (*p == ' ')
+        *p = 0;
 }
 
 static int
@@ -182,7 +182,20 @@ start_shell(bool tracing)
         printf("sish$ ");
         if (fgets(buf, sizeof(buf), stdin) == NULL)
             warn("fgets");
-        else
-            execute_command(buf, tracing, STDIN_FILENO, STDOUT_FILENO);
+        else {
+            char *cmd = strtok(buf, "|");
+            int pipefd[2], in_fd = STDIN_FILENO, out_fd;
+            while (cmd) {
+                char *next_cmd = strtok(NULL, "|");
+                if (next_cmd) {
+                    pipe(pipefd);
+                    out_fd = pipefd[1];
+                } else
+                    out_fd = STDOUT_FILENO;
+                execute_command(cmd, tracing, in_fd, out_fd);
+                in_fd = pipefd[0];
+                cmd = next_cmd;
+            }
+        }
     }
 }
