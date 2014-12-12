@@ -57,8 +57,7 @@ split_args(char *args)
     char **argv = malloc(argc * sizeof(char *));
 
     argc = 0;
-    const char *delim = " ";
-    for (char *token = strtok(args, delim); token; token = strtok(NULL, delim))
+    for (char *token = strtok(args, " "); token; token = strtok(NULL, " "))
         argv[argc++] = token;
     argv[argc] = NULL;
 
@@ -86,8 +85,7 @@ shrink_space(char *s)
         else
             *p++ = *s++;
     }
-    if (*--p == '\n')
-        *p-- = 0;
+    *p-- = 0;
     if (*p == ' ')
         *p = 0;
 }
@@ -135,39 +133,38 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
         }
     }
     shrink_space(cmd);
-    if (*cmd == 0)
-        return;
+    if (*cmd) {
+        if (tracing)
+            fprintf(stderr, "+ %s\n", cmd);
 
-    if (tracing)
-        fprintf(stderr, "+ %s\n", cmd);
+        char **argv = split_args(cmd);
 
-    char **argv = split_args(cmd);
+        if (strcmp(cmd, "exit") == 0)
+            exit(EXIT_SUCCESS);
+        else if (strcmp(cmd, "echo") == 0)
+            echo(argv, out_fd);
+        else if (strcmp(cmd, "cd") == 0)
+            cd(argv[1]);
+        else {
+            pid_t pid = fork();
+            if (pid < 0) {
+                warn("fork");
+                return;
+            }
 
-    if (strcmp(cmd, "exit") == 0)
-        exit(EXIT_SUCCESS);
-    else if (strcmp(cmd, "echo") == 0)
-        echo(argv, out_fd);
-    else if (strcmp(cmd, "cd") == 0)
-        cd(argv[1]);
-    else {
-        pid_t pid = fork();
-        if (pid < 0) {
-            warn("fork");
-            return;
+            if (pid == 0) {
+                dup2(in_fd, STDIN_FILENO);
+                dup2(out_fd, STDOUT_FILENO);
+                execvp(cmd, argv);
+                err(127, "%s", cmd);
+            }
+
+            int status;
+            if (waitpid(pid, &status, 0) == -1)
+                warn("waitpid");
         }
-
-        if (pid == 0) {
-            dup2(in_fd, STDIN_FILENO);
-            dup2(out_fd, STDOUT_FILENO);
-            execvp(cmd, argv);
-            err(127, "%s", cmd);
-        }
-
-        int status;
-        if (waitpid(pid, &status, 0) == -1)
-            warn("waitpid");
+        free(argv);
     }
-    free(argv);
     if (in_fd != STDIN_FILENO)
         close(in_fd);
     if (out_fd != STDOUT_FILENO)
@@ -183,10 +180,10 @@ start_shell(bool tracing)
         if (fgets(buf, sizeof(buf), stdin) == NULL)
             warn("fgets");
         else {
-            char *cmd = strtok(buf, "|");
+            char *cmd = strtok(buf, "|\n");
             int pipefd[2], in_fd = STDIN_FILENO, out_fd;
             while (cmd) {
-                char *next_cmd = strtok(NULL, "|");
+                char *next_cmd = strtok(NULL, "|\n");
                 if (next_cmd) {
                     pipe(pipefd);
                     out_fd = pipefd[1];
