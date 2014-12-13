@@ -55,6 +55,8 @@ split_args(char *args)
             argc++;
 
     char **argv = malloc(argc * sizeof(char *));
+    if (argv == NULL)
+        err(EXIT_FAILURE, "malloc");
 
     argc = 0;
     for (char *token = strtok(args, " "); token; token = strtok(NULL, " "))
@@ -185,7 +187,10 @@ start_shell(bool tracing)
             while (cmd) {
                 char *next_cmd = strtok(NULL, "|\n");
                 if (next_cmd) {
-                    pipe(pipefd);
+                    if (pipe(pipefd) == -1) {
+                        warn("pipe");
+                        break;
+                    }
                     out_fd = pipefd[1];
                 } else
                     out_fd = STDOUT_FILENO;
