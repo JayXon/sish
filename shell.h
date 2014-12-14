@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+extern int status;
+
 void
 parse_command(char *cmd, bool tracing);
 

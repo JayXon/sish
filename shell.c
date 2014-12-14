@@ -18,17 +18,24 @@
 #define ARG_MAX sysconf(_SC_ARG_MAX)
 #endif
 
-static void
+int status;
+
+static int
 echo(char **argv, int fd)
 {
-    if (*++argv)
-        dprintf(fd, "%s", *argv++);
-    while (*argv)
-        dprintf(fd, " %s", *argv++);
+    if (*++argv) {
+        if (strcmp(*argv, "$?") == 0)
+            dprintf(fd, "%d", status);
+        else if (strcmp(*argv, "$$") == 0)
+            dprintf(fd, "%d", getpid());
+        else
+            dprintf(fd, "%s", *argv);
+    }
     dprintf(fd, "\n");
+    return 0;
 }
 
-static void
+static int
 cd(char *path)
 {
     if (path == NULL)
@@ -36,14 +43,16 @@ cd(char *path)
             struct passwd *pw = getpwuid(getuid());
             if (pw == NULL) {
                 warn("getpwuid");
-                return;
+                return 1;
             }
             if ((path = pw->pw_dir) == NULL)
-                return;
+                return 1;
         }
 
-    if (chdir(path) == -1)
-        warn("cd: %s", path);
+    if (chdir(path) == 0)
+        return 0;
+    warn("cd: %s", path);
+    return 1;
 }
 
 static char **
@@ -143,11 +152,11 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
         char **argv = split_args(cmd);
 
         if (strcmp(cmd, "exit") == 0)
-            exit(EXIT_SUCCESS);
+            exit(status);
         else if (strcmp(cmd, "echo") == 0)
-            echo(argv, out_fd);
+            status = echo(argv, out_fd);
         else if (strcmp(cmd, "cd") == 0)
-            cd(argv[1]);
+            status = cd(argv[1]);
         else {
             if ((pid = fork()) < 0) {
                 warn("fork");
@@ -185,9 +194,9 @@ parse_command(char *buf, bool tracing)
     }
     buf_end[1] = 0;
     /* double fork to prevent background commands from becoming zombies */
+    pid_t pid;
     if (background) {
-        pid_t pid = fork();
-        if (pid < 0) {
+        if ((pid = fork()) < 0) {
             warn("fork");
             return;
         }
@@ -210,16 +219,24 @@ parse_command(char *buf, bool tracing)
         }
         else
             out_fd = STDOUT_FILENO;
-        n_children += execute_command(cmd, tracing, in_fd, out_fd) > 0;
+        pid = execute_command(cmd, tracing, in_fd, out_fd);
+        n_children += pid > 0;
         in_fd = pipefd[0];
         cmd = next_cmd;
     }
     if (background)
         exit(EXIT_SUCCESS);
     while (n_children--) {
-        int status;
-        if (wait(&status) == -1)
+        int s;
+        pid_t t = wait(&s);
+        if (t == -1)
             warn("waitpid");
+        else if (t == pid) {
+            if (WIFEXITED(s))
+                status = WEXITSTATUS(s);
+            else if (WIFSIGNALED(s))
+                status = 128 + WTERMSIG(s);
+        }
     }
 }
 

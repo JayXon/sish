@@ -50,5 +50,5 @@ main(int argc, char *argv[])
     else
         start_shell(tracing);
 
-    return EXIT_SUCCESS;
+    return status;
 }
