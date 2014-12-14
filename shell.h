@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-void
+pid_t
 execute_command(char *cmd, bool tracing, int in_fd, int out_fd);
 
 void

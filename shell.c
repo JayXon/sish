@@ -115,9 +115,10 @@ open_redirect_file(char **file_name, int fd, int open_flag)
     return fd;
 }
 
-void
+pid_t
 execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
 {
+    pid_t pid = 0;
     for (char *p = cmd; *p; p++) {
         if (*p == '>') {
             int flags = O_WRONLY | O_CREAT | O_TRUNC;
@@ -127,11 +128,11 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
                 flags = O_WRONLY | O_CREAT | O_APPEND;
             }
             if ((out_fd = open_redirect_file(&p, out_fd, flags)) == -1)
-                return;
+                return pid;
         } else if (*p == '<') {
             *p++ = ' ';
             if ((in_fd = open_redirect_file(&p, in_fd, O_RDONLY)) == -1)
-                return;
+                return pid;
         }
     }
     shrink_space(cmd);
@@ -148,10 +149,9 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
         else if (strcmp(cmd, "cd") == 0)
             cd(argv[1]);
         else {
-            pid_t pid = fork();
-            if (pid < 0) {
+            if ((pid = fork()) < 0) {
                 warn("fork");
-                return;
+                return pid;
             }
 
             if (pid == 0) {
@@ -160,10 +160,6 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
                 execvp(cmd, argv);
                 err(127, "%s", cmd);
             }
-
-            int status;
-            if (waitpid(pid, &status, 0) == -1)
-                warn("waitpid");
         }
         free(argv);
     }
@@ -171,21 +167,47 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
         close(in_fd);
     if (out_fd != STDOUT_FILENO)
         close(out_fd);
+    return pid;
 }
 
 void
 start_shell(bool tracing)
 {
     char buf[ARG_MAX];
+    int status;
     while (true) {
         printf("sish$ ");
         if (fgets(buf, sizeof(buf), stdin) == NULL)
             warn("fgets");
         else {
-            char *cmd = strtok(buf, "|\n");
-            int pipefd[2], in_fd = STDIN_FILENO, out_fd;
+            char *buf_end = buf + strlen(buf) - 1;
+            if (*buf_end == '\n')
+                buf_end--;
+            while (buf_end >= buf && (*buf_end == ' ' || *buf_end == '\t'))
+                buf_end--;
+            bool background = false;
+            if (buf_end >= buf && *buf_end == '&') {
+                background = true;
+                buf_end--;
+            }
+            buf_end[1] = 0;
+            /* double fork to prevent background commands from becoming zombies */
+            if (background) {
+                pid_t pid = fork();
+                if (pid < 0) {
+                    warn("fork");
+                    continue;
+                }
+                if (pid > 0) {
+                    if (waitpid(pid, NULL, 0) == -1)
+                        warn("waitpid");
+                    continue;
+                }
+            }
+            char *cmd = strtok(buf, "|");
+            int pipefd[2], in_fd = STDIN_FILENO, out_fd, n_children = 0;
             while (cmd) {
-                char *next_cmd = strtok(NULL, "|\n");
+                char *next_cmd = strtok(NULL, "|");
                 if (next_cmd) {
                     if (pipe(pipefd) == -1) {
                         warn("pipe");
@@ -194,9 +216,15 @@ start_shell(bool tracing)
                     out_fd = pipefd[1];
                 } else
                     out_fd = STDOUT_FILENO;
-                execute_command(cmd, tracing, in_fd, out_fd);
+                n_children += execute_command(cmd, tracing, in_fd, out_fd) > 0;
                 in_fd = pipefd[0];
                 cmd = next_cmd;
+            }
+            if (background)
+                exit(EXIT_SUCCESS);
+            while (n_children--) {
+                if (wait(&status) == -1)
+                    warn("waitpid");
             }
         }
     }
