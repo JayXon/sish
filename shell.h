@@ -3,8 +3,8 @@
 
 #include <stdbool.h>
 
-pid_t
-execute_command(char *cmd, bool tracing, int in_fd, int out_fd);
+void
+parse_command(char *cmd, bool tracing);
 
 void
 start_shell(bool tracing);
