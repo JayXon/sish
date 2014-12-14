@@ -6,7 +6,7 @@
  *
  */
 
-
+#include <err.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +44,13 @@ main(int argc, char *argv[])
 
     if (argc > optind)
         usage();
+
+    char *shell_path = realpath(argv[0], NULL);
+    if (shell_path == NULL)
+        warn("realpath");
+    else if (setenv("SHELL", shell_path, 1) == -1)
+        warn("setenv");
+    free(shell_path);
 
     if (command)
         parse_command(command, tracing);
