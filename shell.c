@@ -152,7 +152,7 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
         char **argv = split_args(cmd);
 
         if (strcmp(cmd, "exit") == 0)
-            exit(status);
+            exit(EXIT_SUCCESS);
         else if (strcmp(cmd, "echo") == 0)
             status = echo(argv, out_fd);
         else if (strcmp(cmd, "cd") == 0)
@@ -206,10 +206,11 @@ parse_command(char *buf, bool tracing)
             return;
         }
     }
-    char *cmd = strtok(buf, "|");
+    char *saveptr;
+    char *cmd = strtok_r(buf, "|", &saveptr);
     int pipefd[2], in_fd = STDIN_FILENO, out_fd, n_children = 0;
     while (cmd) {
-        char *next_cmd = strtok(NULL, "|");
+        char *next_cmd = strtok_r(NULL, "|", &saveptr);
         if (next_cmd) {
             if (pipe(pipefd) == -1) {
                 warn("pipe");
