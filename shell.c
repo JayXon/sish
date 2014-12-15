@@ -136,12 +136,16 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
                 *p++ = ' ';
                 flags = O_WRONLY | O_CREAT | O_APPEND;
             }
-            if ((out_fd = open_redirect_file(&p, out_fd, flags)) == -1)
+            if ((out_fd = open_redirect_file(&p, out_fd, flags)) == -1) {
+                status = 1;
                 return pid;
+            }
         } else if (*p == '<') {
             *p++ = ' ';
-            if ((in_fd = open_redirect_file(&p, in_fd, O_RDONLY)) == -1)
+            if ((in_fd = open_redirect_file(&p, in_fd, O_RDONLY)) == -1) {
+                status = 1;
                 return pid;
+            }
         }
     }
     shrink_space(cmd);
