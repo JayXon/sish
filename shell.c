@@ -127,7 +127,7 @@ open_redirect_file(char **file_name, int fd, int open_flag)
 }
 
 static pid_t
-execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
+execute_command(char *cmd, bool tracing, int in_fd, int out_fd, int fd_to_close)
 {
     pid_t pid = 0;
     for (char *p = cmd; *p; p++) {
@@ -172,6 +172,8 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
             if (pid == 0) {
                 dup2(in_fd, STDIN_FILENO);
                 dup2(out_fd, STDOUT_FILENO);
+                if (fd_to_close > 0)
+                    close(fd_to_close);
                 execvp(cmd, argv);
                 err(127, "%s", cmd);
             }
@@ -218,7 +220,7 @@ parse_command(char *buf, bool tracing)
     }
     char *saveptr;
     char *cmd = strtok_r(buf, "|", &saveptr);
-    int pipefd[2], in_fd = STDIN_FILENO, out_fd, n_children = 0;
+    int pipefd[2], in_fd = STDIN_FILENO, n_children = 0;
     while (cmd) {
         char *next_cmd = strtok_r(NULL, "|", &saveptr);
         if (next_cmd) {
@@ -226,13 +228,11 @@ parse_command(char *buf, bool tracing)
                 warn("pipe");
                 break;
             }
-            out_fd = pipefd[1];
-        }
-        else
-            out_fd = STDOUT_FILENO;
-        pid = execute_command(cmd, tracing, in_fd, out_fd);
+            pid = execute_command(cmd, tracing, in_fd, pipefd[1], pipefd[0]);
+            in_fd = pipefd[0];
+        } else
+            pid = execute_command(cmd, tracing, in_fd, STDOUT_FILENO, -1);
         n_children += pid > 0;
-        in_fd = pipefd[0];
         cmd = next_cmd;
     }
     if (background)
