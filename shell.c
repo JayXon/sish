@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <pwd.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,7 @@
 #endif
 
 int status;
+bool parsing;
 
 static int
 echo(char **argv, int fd)
@@ -186,6 +188,7 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd)
 void
 parse_command(char *buf, bool tracing)
 {
+    parsing = true;
     char *buf_end = buf + strlen(buf) - 1;
     if (*buf_end == '\n')
         buf_end--;
@@ -209,6 +212,9 @@ parse_command(char *buf, bool tracing)
                 warn("waitpid");
             return;
         }
+        /* change PGID of the child so that Ctrl-C won't terminate it */
+        if (setpgid(0, 0) == -1)
+            warn("setpgid");
     }
     char *saveptr;
     char *cmd = strtok_r(buf, "|", &saveptr);
@@ -245,15 +251,30 @@ parse_command(char *buf, bool tracing)
     }
 }
 
+static void
+sig_int_handler(int signo)
+{
+    putchar('\n');
+    if (parsing)
+        return;
+    printf("sish$ ");
+    fflush(stdout);
+}
+
 void
 start_shell(bool tracing)
 {
     char buf[ARG_MAX];
+
+    if (signal(SIGINT, sig_int_handler) == SIG_ERR)
+        warn("signal");
+
     while (true) {
         printf("sish$ ");
         if (fgets(buf, sizeof(buf), stdin) == NULL)
             warn("fgets");
         else
             parse_command(buf, tracing);
+        parsing = false;
     }
 }
