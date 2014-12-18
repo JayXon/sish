@@ -57,12 +57,38 @@ cd(char *path)
     return 1;
 }
 
+static char *
+skip_space(char *s)
+{
+    while (*s == ' ' || *s == '\t')
+        s++;
+    return s;
+}
+
+static void
+shrink_space(char *s)
+{
+    char *p = s;
+    s = skip_space(s);
+    while (*s) {
+        if (*s == ' ' || *s == '\t') {
+            s = skip_space(s);
+            *p++ = ' ';
+        }
+        else
+            *p++ = *s++;
+    }
+    *p-- = 0;
+    if (*p == ' ')
+        *p = 0;
+}
+
 static char **
 split_args(char *args)
 {
     int argc = 2;
     for (int i = 1; args[i]; i++)
-        if ((args[i] == ' ' || args[i] == '\t') && args[i-1] != ' ' && args[i-1] != '\t')
+        if (args[i] == ' ')
             argc++;
 
     char **argv = malloc(argc * sizeof(char *));
@@ -70,19 +96,11 @@ split_args(char *args)
         err(EXIT_FAILURE, "malloc");
 
     argc = 0;
-    for (char *token = strtok(args, " \t"); token; token = strtok(NULL, " \t"))
+    for (char *token = strtok(args, " "); token; token = strtok(NULL, " "))
         argv[argc++] = token;
     argv[argc] = NULL;
 
     return argv;
-}
-
-static char *
-skip_space(char *s)
-{
-    while (*s == ' ' || *s == '\t')
-        s++;
-    return s;
 }
 
 static int
@@ -132,34 +150,34 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd, int fd_to_close)
             }
         }
     }
-
-    char **argv = split_args(cmd);
-
+    shrink_space(cmd);
     if (tracing)
         fprintf(stderr, "+ %s\n", cmd);
-
-    if (strcmp(cmd, "exit") == 0)
-        exit(EXIT_SUCCESS);
-    else if (strcmp(cmd, "echo") == 0)
-        status = echo(argv, out_fd);
-    else if (strcmp(cmd, "cd") == 0)
-        status = cd(argv[1]);
-    else {
-        if ((pid = fork()) < 0) {
-            warn("fork");
-            return pid;
+    if (*cmd) {
+        char **argv = split_args(cmd);
+        if (strcmp(argv[0], "exit") == 0)
+            exit(EXIT_SUCCESS);
+        else if (strcmp(argv[0], "echo") == 0)
+            status = echo(argv, out_fd);
+        else if (strcmp(argv[0], "cd") == 0)
+            status = cd(argv[1]);
+        else {
+            if ((pid = fork()) < 0) {
+                warn("fork");
+                return pid;
+            }
+            if (pid == 0) {
+                dup2(in_fd, STDIN_FILENO);
+                dup2(out_fd, STDOUT_FILENO);
+                if (fd_to_close > 0)
+                    close(fd_to_close);
+                execvp(argv[0], argv);
+                err(127, "%s", argv[0]);
+            }
+            n_children++;
         }
-        if (pid == 0) {
-            dup2(in_fd, STDIN_FILENO);
-            dup2(out_fd, STDOUT_FILENO);
-            if (fd_to_close > 0)
-                close(fd_to_close);
-            execvp(cmd, argv);
-            err(127, "%s", cmd);
-        }
-        n_children++;
+        free(argv);
     }
-    free(argv);
     if (in_fd != STDIN_FILENO)
         close(in_fd);
     if (out_fd != STDOUT_FILENO)
@@ -246,10 +264,9 @@ parse_command(char *buf, bool tracing)
 static void
 sig_int_handler(int signo)
 {
-    putchar('\n');
     if (n_children >= 0)
         return;
-    printf("sish$ ");
+    printf("\nsish$ ");
     fflush(stdout);
 }
 
