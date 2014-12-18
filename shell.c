@@ -20,7 +20,7 @@
 #endif
 
 int status;
-bool parsing;
+int n_children;
 
 static int
 echo(char **argv, int fd)
@@ -62,7 +62,7 @@ split_args(char *args)
 {
     int argc = 2;
     for (int i = 1; args[i]; i++)
-        if (args[i] == ' ')
+        if ((args[i] == ' ' || args[i] == '\t') && args[i-1] != ' ' && args[i-1] != '\t')
             argc++;
 
     char **argv = malloc(argc * sizeof(char *));
@@ -70,7 +70,7 @@ split_args(char *args)
         err(EXIT_FAILURE, "malloc");
 
     argc = 0;
-    for (char *token = strtok(args, " "); token; token = strtok(NULL, " "))
+    for (char *token = strtok(args, " \t"); token; token = strtok(NULL, " \t"))
         argv[argc++] = token;
     argv[argc] = NULL;
 
@@ -85,31 +85,13 @@ skip_space(char *s)
     return s;
 }
 
-static void
-shrink_space(char *s)
-{
-    char *p = s;
-    s = skip_space(s);
-    while (*s) {
-        if (*s == ' ' || *s == '\t') {
-            s = skip_space(s);
-            *p++ = ' ';
-        }
-        else
-            *p++ = *s++;
-    }
-    *p-- = 0;
-    if (*p == ' ')
-        *p = 0;
-}
-
 static int
 open_redirect_file(char **file_name, int fd, int open_flag)
 {
     char *p = skip_space(*file_name);
-    int l = strcspn(p, " \t\n<>");
+    int l = strcspn(p, " \t<>");
     if (l == 0) {
-        warnx("Redirection file name needed");
+        warnx("syntax error: need redirection file name");
         return -1;
     }
     char t = p[l];
@@ -150,36 +132,34 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd, int fd_to_close)
             }
         }
     }
-    shrink_space(cmd);
-    if (*cmd) {
-        if (tracing)
-            fprintf(stderr, "+ %s\n", cmd);
 
-        char **argv = split_args(cmd);
+    char **argv = split_args(cmd);
 
-        if (strcmp(cmd, "exit") == 0)
-            exit(EXIT_SUCCESS);
-        else if (strcmp(cmd, "echo") == 0)
-            status = echo(argv, out_fd);
-        else if (strcmp(cmd, "cd") == 0)
-            status = cd(argv[1]);
-        else {
-            if ((pid = fork()) < 0) {
-                warn("fork");
-                return pid;
-            }
+    if (tracing)
+        fprintf(stderr, "+ %s\n", cmd);
 
-            if (pid == 0) {
-                dup2(in_fd, STDIN_FILENO);
-                dup2(out_fd, STDOUT_FILENO);
-                if (fd_to_close > 0)
-                    close(fd_to_close);
-                execvp(cmd, argv);
-                err(127, "%s", cmd);
-            }
+    if (strcmp(cmd, "exit") == 0)
+        exit(EXIT_SUCCESS);
+    else if (strcmp(cmd, "echo") == 0)
+        status = echo(argv, out_fd);
+    else if (strcmp(cmd, "cd") == 0)
+        status = cd(argv[1]);
+    else {
+        if ((pid = fork()) < 0) {
+            warn("fork");
+            return pid;
         }
-        free(argv);
+        if (pid == 0) {
+            dup2(in_fd, STDIN_FILENO);
+            dup2(out_fd, STDOUT_FILENO);
+            if (fd_to_close > 0)
+                close(fd_to_close);
+            execvp(cmd, argv);
+            err(127, "%s", cmd);
+        }
+        n_children++;
     }
+    free(argv);
     if (in_fd != STDIN_FILENO)
         close(in_fd);
     if (out_fd != STDOUT_FILENO)
@@ -190,7 +170,6 @@ execute_command(char *cmd, bool tracing, int in_fd, int out_fd, int fd_to_close)
 void
 parse_command(char *buf, bool tracing)
 {
-    parsing = true;
     char *buf_end = buf + strlen(buf) - 1;
     if (*buf_end == '\n')
         buf_end--;
@@ -202,6 +181,14 @@ parse_command(char *buf, bool tracing)
         buf_end--;
     }
     buf_end[1] = 0;
+    char *cmd = skip_space(buf);
+    if (*cmd == 0)
+        return;
+    if (*cmd == '|') {
+        warnx("syntax error: need command to write to pipe");
+        status = 2;
+        return;
+    }
     /* double fork to prevent background commands from becoming zombies */
     pid_t pid;
     if (background) {
@@ -218,22 +205,27 @@ parse_command(char *buf, bool tracing)
         if (setpgid(0, 0) == -1)
             warn("setpgid");
     }
-    char *saveptr;
-    char *cmd = strtok_r(buf, "|", &saveptr);
-    int pipefd[2], in_fd = STDIN_FILENO, n_children = 0;
-    while (cmd) {
-        char *next_cmd = strtok_r(NULL, "|", &saveptr);
-        if (next_cmd) {
+    int pipefd[2], in_fd = STDIN_FILENO;
+    n_children = 0;
+    char *pipe_ptr = cmd;
+    while (pipe_ptr) {
+        if ((pipe_ptr = strchr(cmd, '|')) != NULL) {
+            *pipe_ptr = 0;
             if (pipe(pipefd) == -1) {
                 warn("pipe");
                 break;
             }
             pid = execute_command(cmd, tracing, in_fd, pipefd[1], pipefd[0]);
+            cmd = skip_space(pipe_ptr + 1);
+            if (*cmd == '|' || *cmd == 0) {
+                warnx("syntax error: need command to read from pipe");
+                status = 2;
+                close(pipefd[0]);
+                break;
+            }
             in_fd = pipefd[0];
         } else
             pid = execute_command(cmd, tracing, in_fd, STDOUT_FILENO, -1);
-        n_children += pid > 0;
-        cmd = next_cmd;
     }
     if (background)
         exit(EXIT_SUCCESS);
@@ -255,7 +247,7 @@ static void
 sig_int_handler(int signo)
 {
     putchar('\n');
-    if (parsing)
+    if (n_children >= 0)
         return;
     printf("sish$ ");
     fflush(stdout);
@@ -265,7 +257,7 @@ void
 start_shell(bool tracing)
 {
     char buf[ARG_MAX];
-
+    n_children = -1;
     if (signal(SIGINT, sig_int_handler) == SIG_ERR)
         warn("signal");
 
@@ -275,6 +267,5 @@ start_shell(bool tracing)
             warn("fgets");
         else
             parse_command(buf, tracing);
-        parsing = false;
     }
 }
